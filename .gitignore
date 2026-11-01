@@ -38,3 +38,7 @@ ehthumbs.db
 # ---------------- Test / build artifacts (if any added later) ----------------
 dist/
 build/
+
+# ---------------- Generated at first-run (machine-specific, contains port) ----------------
+start.sh
+start.bat

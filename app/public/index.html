@@ -20,13 +20,16 @@
     <svg viewBox="0 0 24 24" width="16" height="16" class="ico" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     <input id="search" type="search" placeholder="搜索文件名…" autocomplete="off">
     <select id="searchScope" title="搜索范围">
-      <option value="all">全盘</option>
+      <option value="all">所有目录</option>
       <option value="current">当前目录</option>
     </select>
   </div>
 
   <button id="btnAdmin" class="btn ghost">管理员</button>
+  <button id="btnManageShares" class="btn ghost" hidden>管理共享目录</button>
 </header>
+
+<div class="sharebar" id="sharebar"></div>
 
 <div class="toolbar">
   <button id="btnBack" class="btn icon back" title="返回上一级" hidden>
@@ -133,6 +136,42 @@
 </div>
 
 <div id="toast" class="toast" hidden></div>
+
+<div id="shareModal" class="modal" hidden>
+  <div class="modalbox wide">
+    <h3>管理共享目录</h3>
+    <p class="sub">启用 / 停用共享目录，或把电脑上的其他文件夹加入局域网共享。目录标识会写入目录内的隐藏标记文件，换机或换盘后会自动重新关联。</p>
+    <div id="shareList"></div>
+    <div class="share-actions">
+      <button id="btnRescanShares" class="btn ghost">重新扫描</button>
+    </div>
+    <h4>添加共享目录</h4>
+    <p class="sub">下面是这台电脑上检测到、尚未添加的其他磁盘与分区（含机械硬盘、外接硬盘）。点击「添加」即可共享整块盘；只想共享盘内某个子文件夹，请用下方的目录浏览器继续展开。</p>
+    <div id="candidateList" class="candlist"></div>
+    <p class="sub" style="margin-top:10px">也可以直接填路径，或浏览任意目录（根目录会列出全部已挂载磁盘）：</p>
+    <div class="addrow">
+      <input id="addSharePath" type="text" placeholder="要共享的目录路径，例如 /mnt/homedisk">
+      <input id="addShareName" type="text" placeholder="显示名称（可选）">
+      <button id="btnAddShare" class="btn primary">添加</button>
+    </div>
+    <div class="sharebrowser">
+      <div class="sb-head">
+        <span>或浏览服务器目录选择：</span>
+        <button id="btnSbUp" class="btn ghost">↑ 上一级</button>
+        <button id="btnSbHome" class="btn ghost">主目录</button>
+        <button id="btnSbRoot" class="btn ghost">💽 磁盘</button>
+      </div>
+      <div class="sb-path" id="sbPath"></div>
+      <div class="sb-list" id="sbList"></div>
+      <div class="sb-pick">
+        <button id="btnSbPick" class="btn primary">共享当前目录</button>
+      </div>
+    </div>
+    <div class="modalbtns">
+      <button id="shareModalClose" class="btn ghost">关闭</button>
+    </div>
+  </div>
+</div>
 
 <script src="app.js"></script>
 </body>

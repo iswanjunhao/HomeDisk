@@ -12,7 +12,7 @@ const fsp = fs.promises;
 const path = require('path');
 const { Router } = require('express');
 
-const { AppError, resolveSafe, toRel, safeName, uniqueName, getRoot } = require('../lib/pathGuard');
+const { AppError, resolveSafe, toRel, safeName, uniqueName, isAnyDiskRoot, getDisks } = require('../lib/pathGuard');
 const { classify } = require('../lib/classifier');
 const auth = require('../lib/auth');
 const config = require('../lib/config');
@@ -53,7 +53,7 @@ router.post('/rename', auth.requireAdmin, async (req, res, next) => {
     const parent = path.dirname(abs);
     const target = path.join(parent, newName);
 
-    if (abs === getRoot()) throw new AppError(400, '不能重命名共享盘根目录');
+    if (isAnyDiskRoot(abs)) throw new AppError(400, '共享目录的根路径不支持重命名（如需调整请在「管理共享目录」中操作）');
     if (fs.existsSync(target)) throw new AppError(400, `「${newName}」已存在，换一个名字`);
 
     await fsp.rename(abs, target);
@@ -93,8 +93,8 @@ router.post('/move', auth.requireAdmin, async (req, res, next) => {
 
     for (const p of paths) {
       const srcAbs = resolveSafe(p, { allowRoot: false });
-      if (srcAbs === getRoot()) {
-        errors.push({ path: p, error: '不能移动共享盘根目录' });
+      if (isAnyDiskRoot(srcAbs)) {
+        errors.push({ path: p, error: '共享目录的根路径不支持移动' });
         continue;
       }
       // 关键防护：不能把文件夹移动到它自己里面（会造成无限递归 / 数据错乱）
@@ -113,7 +113,7 @@ router.post('/move', auth.requireAdmin, async (req, res, next) => {
         target = path.join(destAbs, uniqueName(destAbs, base));
       }
       try {
-        await fsp.rename(srcAbs, target);
+        await safeRename(srcAbs, target);
         moved.push({ from: toRel(srcAbs), to: toRel(target) });
       } catch (e) {
         errors.push({ path: p, error: e.message });
@@ -141,9 +141,9 @@ router.post('/delete', auth.requireAdmin, async (req, res, next) => {
 
     for (const p of paths) {
       const abs = resolveSafe(p, { allowRoot: false });
-      // 红线：绝不允许删掉共享盘根目录本身
-      if (abs === getRoot()) {
-        errors.push({ path: p, error: '不能删除共享盘根目录' });
+      // 红线：绝不允许删掉共享目录的根路径本身
+      if (isAnyDiskRoot(abs)) {
+        errors.push({ path: p, error: '共享目录的根路径不支持删除' });
         continue;
       }
       try {
@@ -182,6 +182,14 @@ async function moveToTrash(abs, trashDir) {
 router.get('/tree', async (req, res, next) => {
   try {
     const rel = req.query.path || '';
+    // 顶层返回共享目录列表，供"移动到"弹窗选择目标
+    if (!rel || rel === '/') {
+      const disks = getDisks().filter((d) => d.enabled);
+      return res.json({
+        path: '/',
+        dirs: disks.map((d) => ({ name: d.name, path: '/' + d.id + '/', isShare: true })),
+      });
+    }
     const abs = resolveSafe(rel);
     const dirents = await fsp.readdir(abs, { withFileTypes: true });
     const dirs = dirents.filter((d) => d.isDirectory() && !d.name.startsWith('.'));
@@ -194,5 +202,39 @@ router.get('/tree', async (req, res, next) => {
     next(e);
   }
 });
+
+/** 跨文件系统移动（不同共享目录所在磁盘之间 rename 会 EXDEV，改为拷贝后删除） */
+async function safeRename(srcAbs, target) {
+  try {
+    await fsp.rename(srcAbs, target);
+    return;
+  } catch (e) {
+    if (e && e.code === 'EXDEV') {
+      await copyRecursive(srcAbs, target);
+      await removeRecursive(srcAbs);
+      return;
+    }
+    throw e;
+  }
+}
+
+async function copyRecursive(src, dest) {
+  const st = await fsp.stat(src);
+  if (st.isDirectory()) {
+    await fsp.mkdir(dest, { recursive: true });
+    const entries = await fsp.readdir(src, { withFileTypes: true });
+    for (const en of entries) {
+      if (en.name.startsWith('.')) continue;
+      await copyRecursive(path.join(src, en.name), path.join(dest, en.name));
+    }
+  } else {
+    await fsp.mkdir(path.dirname(dest), { recursive: true });
+    await fsp.copyFile(src, dest);
+  }
+}
+
+async function removeRecursive(p) {
+  await fsp.rm(p, { recursive: true, force: true });
+}
 
 module.exports = router;

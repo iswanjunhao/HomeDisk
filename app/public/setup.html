@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>家庭云盘 · 首次初始化向导</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --surface:#fff; --surface-2:#f0f2f5; --border:#e3e6ea;
+    --text:#1c1f23; --text-2:#5f6672; --text-3:#9aa1ab;
+    --primary:#3b6dcd; --primary-weak:#e8f0fd; --danger:#d64545; --ok:#2e9e63;
+    --radius:10px; --radius-lg:14px; --shadow:0 1px 2px rgba(16,24,40,.05),0 4px 14px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#16181c; --surface:#1e2126; --surface-2:#262a31; --border:#33383f;
+      --text:#e7eaee; --text-2:#a4acb8; --text-3:#6f7784; --primary:#6b9bf0; --primary-weak:#22314d;
+      --danger:#f0736f; --ok:#4cc38a; --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.25); }
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","Segoe UI",sans-serif;
+    font-size:14px;line-height:1.6;}
+  .wrap{max-width:680px;margin:0 auto;padding:24px 18px 60px;}
+  .brand{display:flex;align-items:center;gap:8px;font-size:17px;font-weight:700;color:var(--primary);margin-bottom:4px;}
+  .lede{color:var(--text-2);margin:0 0 20px;font-size:13px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
+    padding:18px;margin-bottom:16px;box-shadow:var(--shadow);}
+  .card h2{margin:0 0 4px;font-size:15px;display:flex;align-items:center;gap:8px;}
+  .card .step{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;
+    background:var(--primary);color:#fff;font-size:12px;font-weight:700;flex:none;}
+  .card .hint{color:var(--text-2);font-size:12.5px;margin:0 0 12px;}
+  .btn{cursor:pointer;font-family:inherit;font-size:13px;padding:8px 14px;border-radius:var(--radius);
+    border:1px solid var(--border);background:var(--surface);color:var(--text);white-space:nowrap;
+    display:inline-flex;align-items:center;gap:5px;min-height:36px;}
+  .btn:hover{background:var(--surface-2);}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff;}
+  .btn.primary:hover{filter:brightness(1.08);}
+  .btn.ghost{background:transparent;}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+  input[type=text],input[type=password],input[type=number]{width:100%;font-family:inherit;font-size:14px;
+    padding:9px 11px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface-2);
+    color:var(--text);outline:0;}
+  input:focus{border-color:var(--primary);background:var(--surface);}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .row > input{flex:1;min-width:140px;}
+  /* 已选共享目录 */
+  .chips{display:flex;flex-direction:column;gap:8px;margin-top:10px;}
+  .chip{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);
+    border-radius:var(--radius);background:var(--surface-2);}
+  .chip .nm{flex:none;font-weight:600;min-width:90px;}
+  .chip .pt{flex:1;font-size:12px;color:var(--text-3);word-break:break-all;}
+  .chip button{flex:none;border:0;background:transparent;color:var(--danger);cursor:pointer;font-size:12px;
+    padding:4px 8px;border-radius:6px;}
+  .chip button:hover{background:var(--surface);}
+  .empty-sel{color:var(--text-3);font-size:13px;margin-top:10px;}
+  /* 目录浏览器 */
+  .browser{margin-top:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);}
+  .browser .bh{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border);}
+  .browser .bpath{flex:1;font-size:12px;color:var(--text-2);word-break:break-all;}
+  .browser .blist{max-height:220px;overflow:auto;}
+  .bitem{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;font-size:13px;
+    border-bottom:1px solid var(--border);}
+  .bitem:last-child{border-bottom:0;}
+  .bitem:hover{background:var(--surface);}
+  .bitem.up{color:var(--text-2);}
+  .bitem.vol{background:rgba(59,109,205,.06);font-weight:600;}
+  .bitem.vol:hover{background:rgba(59,109,205,.12);}
+  .bsub{font-weight:400;font-size:11.5px;color:var(--text-3);word-break:break-all;}
+  /* 端口状态 */
+  .port-status{margin-top:8px;font-size:12.5px;min-height:18px;}
+  .port-status.ok{color:var(--ok);}
+  .port-status.warn{color:#c8781f;}
+  .port-status.err{color:var(--danger);}
+  .port-status.busy{color:var(--text-3);}
+  /* 提交 */
+  .submit-bar{display:flex;justify-content:flex-end;gap:10px;margin-top:6px;}
+  .err-box{color:var(--danger);font-size:13px;margin-top:10px;min-height:16px;}
+  /* 成功面板 */
+  .done{text-align:center;padding:30px 10px;}
+  .done h2{justify-content:center;font-size:18px;}
+  .done .urls{margin:16px 0;display:flex;flex-direction:column;gap:8px;}
+  .done .url{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);
+    padding:10px 12px;font-size:13px;word-break:break-all;}
+  .done .url a{color:var(--primary);text-decoration:none;}
+  .done .url a:hover{text-decoration:underline;}
+  .note{color:var(--text-2);font-size:12.5px;margin-top:14px;}
+  label.chk{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2);cursor:pointer;}
+  label.chk input{width:auto;}
+  .two{display:flex;gap:10px;flex-wrap:wrap;}
+  .two > div{flex:1;min-width:180px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" width="22" height="22"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" fill="currentColor"/></svg>
+    <span>家庭云盘 · 首次初始化向导</span>
+  </div>
+  <p class="lede">欢迎！只需三步即可把这台电脑上的文件夹开放给家庭局域网内的其他设备访问。整个过程都在本机浏览器完成，无需在终端手敲命令。</p>
+
+  <div id="form">
+    <!-- 步骤 1：共享目录 -->
+    <div class="card">
+      <h2><span class="step">1</span> 选择要共享的目录</h2>
+      <p class="hint">可以添加多个文件夹（例如「家庭影像」「工作文档」）。点「💽 磁盘」可直接看到这台电脑上所有已挂载的磁盘（含机械硬盘、外接硬盘），选中后加入共享即可。其他设备将只能看到你这里勾选的目录，电脑上的其余文件不会被暴露。</p>
+      <div class="chips" id="wizShares"></div>
+      <div class="empty-sel" id="wizEmpty">还没有选择任何目录。</div>
+
+      <div class="browser">
+        <div class="bh">
+          <span class="bpath" id="wizPath">/</span>
+          <button class="btn ghost" id="wizUp">↑ 上一级</button>
+          <button class="btn ghost" id="wizHome">主目录</button>
+          <button class="btn ghost" id="wizRoot">💽 磁盘</button>
+          <button class="btn primary" id="wizPick">加入共享</button>
+        </div>
+        <div class="blist" id="wizList"></div>
+      </div>
+    </div>
+
+    <!-- 步骤 2：端口 -->
+    <div class="card">
+      <h2><span class="step">2</span> 设置访问端口</h2>
+      <p class="hint">局域网内的设备通过这个端口访问。默认 8080 即可；如果该端口已被其他程序占用，向导会提示你更换。</p>
+      <div class="row">
+        <input type="number" id="wizPort" min="1" max="65535" value="8080" placeholder="端口号（1-65535）">
+      </div>
+      <div class="port-status busy" id="wizPortStatus">输入端口后自动检测可用性…</div>
+    </div>
+
+    <!-- 步骤 3：管理员密码等 -->
+    <div class="card">
+      <h2><span class="step">3</span> 管理员与访问设置</h2>
+      <p class="hint">管理员密码用于在本机或网页上管理共享目录、删除文件等敏感操作。</p>
+      <div class="two">
+        <div>
+          <label style="font-size:12px;color:var(--text-2)">管理员密码</label>
+          <input type="password" id="wizPwd" placeholder="设置管理员密码" style="margin-top:4px">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-2)">再次输入</label>
+          <input type="password" id="wizPwd2" placeholder="确认密码" style="margin-top:4px">
+        </div>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <div style="flex:1;min-width:160px">
+          <label style="font-size:12px;color:var(--text-2)">访客单文件上传上限（GB）</label>
+          <input type="number" id="wizGuest" min="0" step="0.5" value="1" style="margin-top:4px">
+        </div>
+      </div>
+      <div style="margin-top:14px">
+        <label class="chk"><input type="checkbox" id="wizLan" checked> 仅允许局域网网段访问（推荐，关闭后将允许从互联网访问，请注意安全）</label>
+      </div>
+    </div>
+
+    <div class="err-box" id="wizErr"></div>
+    <div class="submit-bar">
+      <button class="btn primary" id="wizSubmit">完成设置并启动</button>
+    </div>
+  </div>
+
+  <!-- 成功面板 -->
+  <div class="card done" id="donePanel" hidden>
+    <h2>🎉 设置完成，服务已启动</h2>
+    <p class="note">家庭云盘正在运行，局域网内的设备现在就能访问你共享的目录了。<br>以后启动只需运行 <code>bash start.sh</code>（或双击 start.sh）。</p>
+    <div class="urls" id="doneUrls"></div>
+    <div class="submit-bar" style="justify-content:center">
+      <button class="btn primary" id="doneOpen">打开家庭云盘</button>
+    </div>
+    <p class="note">提示：本机访问用 127.0.0.1 地址；手机 / 其他电脑用下面的局域网地址（需与这台电脑在同一路由器下）。</p>
+  </div>
+</div>
+
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => Array.from(document.querySelectorAll(s));
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let homePath = '';
+let browsePath = '';
+const wizShares = [];   // [{ path, name }]
+
+async function api(url, opts){
+  const res = await fetch(url, Object.assign({ credentials:'same-origin' }, opts||{}));
+  let data = {};
+  try { data = await res.json(); } catch(e){}
+  if (!res.ok) throw new Error(data.error || ('请求失败（'+res.status+'）'));
+  return data;
+}
+function apiPost(url, body){
+  return api(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{}) });
+}
+
+/* ---------------- 目录浏览 ---------------- */
+async function wizBrowse(p){
+  $('#wizList').innerHTML = '<div class="bitem" style="color:var(--text-3)">读取中…</div>';
+  try {
+    const d = await api('/api/setup/browse?path=' + encodeURIComponent(p||''));
+    browsePath = d.path;
+    $('#wizPath').textContent = browsePath || '/';
+    let html = '';
+    if (d.parent) html += '<div class="bitem up" data-p="'+esc(d.parent)+'">↑ 返回上一级（'+esc(d.parent)+'）</div>';
+    if (!d.dirs.length) html += '<div class="bitem" style="color:var(--text-3)">这个文件夹里没有下级文件夹</div>';
+    else html += d.dirs.map((x)=>{
+      const isVol = x.kind === 'volume' || x.kind === 'system';
+      const icon = isVol ? '💽' : '📁';
+      const sub = isVol ? ' <span class="bsub">'+esc(x.path)+'</span>' : '';
+      return '<div class="bitem'+(isVol?' vol':'')+'" data-p="'+esc(x.path)+'">'+icon+' '+esc(x.name)+sub+'</div>';
+    }).join('');
+    $('#wizList').innerHTML = html;
+    $$('#wizList .bitem').forEach((el)=> el.onclick = ()=> wizBrowse(el.dataset.p));
+  } catch(e){
+    $('#wizList').innerHTML = '<div class="bitem" style="color:var(--danger)">'+esc(e.message)+'</div>';
+  }
+}
+function wizUp(){
+  const parts = browsePath.split('/').filter(Boolean); parts.pop();
+  wizBrowse('/' + parts.join('/'));
+}
+
+/* ---------------- 已选共享目录 ---------------- */
+function renderWizShares(){
+  if (!wizShares.length){
+    $('#wizShares').innerHTML = '';
+    $('#wizEmpty').hidden = false;
+    return;
+  }
+  $('#wizEmpty').hidden = true;
+  $('#wizShares').innerHTML = wizShares.map((s,i)=>
+    '<div class="chip"><span class="nm">'+esc(s.name)+'</span>'+
+    '<span class="pt">'+esc(s.path)+'</span>'+
+    '<button data-i="'+i+'">移除</button></div>').join('');
+  $$('#wizShares button').forEach((b)=> b.onclick = ()=>{ wizShares.splice(Number(b.dataset.i),1); renderWizShares(); });
+}
+function wizPick(){
+  if (!browsePath){ alert('请先选择一个目录'); return; }
+  if (wizShares.some((s)=> s.path === browsePath)){ alert('该目录已添加'); return; }
+  const name = browsePath.split('/').filter(Boolean).pop() || browsePath;
+  wizShares.push({ path: browsePath, name });
+  renderWizShares();
+}
+
+/* ---------------- 端口实时检测（只报告，不杀进程） ---------------- */
+let portTimer = null;
+async function checkPort(){
+  const port = Number($('#wizPort').value);
+  const st = $('#wizPortStatus');
+  if (!Number.isInteger(port) || port < 1 || port > 65535){
+    st.className = 'port-status err'; st.textContent = '端口必须是 1-65535 之间的数字'; return false;
+  }
+  st.className = 'port-status busy'; st.textContent = '检测中…';
+  try {
+    const r = await api('/api/setup/portcheck?port=' + port + '&autoKill=0');
+    if (r.free){ st.className='port-status ok'; st.textContent='✓ 端口可用'; return true; }
+    const others = (r.pids||[]).filter((p)=>!p.ours);
+    if (r.ours){
+      st.className='port-status warn';
+      st.textContent='该端口正被旧的家庭云盘服务占用，完成设置时会自动结束它（无数据丢失）。';
+      return true;
+    }
+    if (others.length){
+      st.className='port-status err';
+      st.textContent='✗ 端口被其他程序占用（PID '+others.map((p)=>p.pid).join(', ')+'），请更换端口号。';
+      return false;
+    }
+    st.className='port-status err'; st.textContent='✗ 端口不可用，请更换端口号。'; return false;
+  } catch(e){
+    st.className='port-status err'; st.textContent='检测失败：'+e.message; return false;
+  }
+}
+
+/* ---------------- 提交 ---------------- */
+async function submit(){
+  const err = $('#wizErr'); err.textContent = '';
+  if (!wizShares.length){ err.textContent='请至少选择一个要共享的目录（步骤 1）。'; return; }
+  const port = Number($('#wizPort').value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535){ err.textContent='端口无效（1-65535）。'; return; }
+  const pwd = $('#wizPwd').value, pwd2 = $('#wizPwd2').value;
+  if (!pwd){ err.textContent='请设置管理员密码。'; return; }
+  if (pwd !== pwd2){ err.textContent='两次输入的密码不一致。'; return; }
+  const guest = Number($('#wizGuest').value) || 1;
+  const lanOnly = $('#wizLan').checked;
+
+  const btn = $('#wizSubmit'); btn.disabled = true; btn.textContent = '正在启动…';
+  try {
+    // 提交前再确认一次端口（这次允许自动结束旧服务）
+    const r = await apiPost('/api/setup/complete', {
+      shares: wizShares, port, password: pwd, guestGB: guest, lanOnly,
+    });
+    // 成功：展示访问地址
+    const urls = r.urls || [];
+    $('#doneUrls').innerHTML = urls.map((u)=>
+      '<div class="url"><a href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u)+'</a></div>').join('');
+    $('#doneOpen').onclick = ()=>{ if (urls[0]) window.open(urls[0], '_blank'); };
+    $('#form').hidden = true;
+    $('#donePanel').hidden = false;
+  } catch(e){
+    btn.disabled = false; btn.textContent = '完成设置并启动';
+    err.textContent = e.message || '设置失败';
+  }
+}
+
+/* ---------------- 初始化 ---------------- */
+async function init(){
+  // 绑定事件
+  $('#wizUp').onclick = wizUp;
+  $('#wizHome').onclick = ()=> wizBrowse('');
+  $('#wizRoot').onclick = ()=> wizBrowse('/');
+  $('#wizPick').onclick = wizPick;
+  $('#wizSubmit').onclick = submit;
+  $('#wizPort').oninput = ()=>{ clearTimeout(portTimer); portTimer = setTimeout(checkPort, 400); };
+
+  renderWizShares();
+  try {
+    const s = await api('/api/setup/state');
+    homePath = s.home || '';
+  } catch(e){ /* 忽略 */ }
+  await wizBrowse(homePath || '');
+  await checkPort();
+}
+init();
+</script>
+</body>
+</html>

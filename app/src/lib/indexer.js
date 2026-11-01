@@ -1,7 +1,7 @@
 /**
- * 后台索引器
+ * 后台索引器（多磁盘版）
  * 1T 盘可能有几十万文件，不可能每次搜索都遍历一遍。
- * 做法：启动时在后台全量扫描一次，结果常驻内存并落盘缓存；之后定时增量刷新。
+ * 做法：启动时在后台全量扫描所有已启用且已挂载的磁盘，结果常驻内存并落盘缓存；之后定时增量刷新。
  * 扫描过程中搜索仍可用（走实时遍历的兜底路径）。
  */
 
@@ -9,11 +9,11 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const { classify } = require('./classifier');
-const { getRoot, isRootAvailable } = require('./pathGuard');
+const { getDisks, isDiskAvailable } = require('./pathGuard');
 
 const CACHE_FILE = path.join(__dirname, '..', '..', 'data', 'index-cache.json');
-const MAX_ENTRIES = 300000;      // 索引上限，防止内存被打爆
-const SKIP_DIRS = new Set(['$RECYCLE.BIN', 'System Volume Information', '.Trash-1000']);
+const MAX_ENTRIES = 600000;      // 索引上限，防止内存被打爆
+const SKIP_DIRS = new Set(['$RECYCLE.BIN', 'System Volume Information', '.Trash-1000', '.homecloud-disk.json']);
 
 let entries = [];
 let status = {
@@ -26,72 +26,87 @@ let status = {
 };
 let refreshTimer = null;
 
+/** 当前可索引的磁盘（已启用 + 已挂载） */
+function indexableDisks() {
+  return getDisks().filter((d) => d.enabled && isDiskAvailable(d.id));
+}
+
+/** 把内部索引条目映射成前端需要的 item 形状（带 diskId 前缀路径） */
+function toItem(e) {
+  return {
+    name: e.n,
+    path: '/' + e.disk + (e.p ? '/' + e.p : '/'),
+    isDir: e.isDir,
+    size: e.isDir ? null : e.s,
+    mtime: e.m,
+    type: e.isDir ? 'folder' : e.t,
+  };
+}
+
 /** 后台全量扫描（非阻塞，用迭代栈避免深层递归爆栈） */
 async function buildIndex() {
   if (status.building) return;
-  if (!isRootAvailable()) {
-    status.error = '共享盘未挂载，暂无法建立索引';
+  const disks = indexableDisks();
+  if (!disks.length) {
+    status.error = '没有已挂载的共享磁盘，暂无法建立索引';
     return;
   }
   status = { building: true, scanned: 0, startedAt: Date.now(), finishedAt: null, durationMs: 0, error: null };
 
-  const root = getRoot();
   const result = [];
-  const stack = [''];
   const started = Date.now();
 
   try {
-    while (stack.length) {
-      const relDir = stack.pop();
-      const absDir = path.join(root, relDir);
-      let dir;
-      try {
-        dir = await fsp.opendir(absDir);
-      } catch (e) {
-        continue; // 无权限或已删除，跳过
-      }
-      for await (const dirent of dir) {
-        // 隐藏文件与 NTFS 系统目录不索引
-        if (dirent.name.startsWith('.')) continue;
-        if (dirent.isDirectory() && SKIP_DIRS.has(dirent.name)) continue;
+    for (const disk of disks) {
+      const root = disk.rootReal;
+      const stack = [''];
+      while (stack.length) {
+        const relDir = stack.pop();
+        const absDir = path.join(root, relDir);
+        let dir;
+        try {
+          dir = await fsp.opendir(absDir);
+        } catch (e) {
+          continue; // 无权限或已删除，跳过
+        }
+        for await (const dirent of dir) {
+          if (dirent.name.startsWith('.')) continue;
+          if (dirent.isDirectory() && SKIP_DIRS.has(dirent.name)) continue;
 
-        const relPath = relDir ? relDir + '/' + dirent.name : dirent.name;
-        const item = {
-          p: relPath,                       // 相对根目录的路径
-          n: dirent.name,                   // 文件名
-          d: relDir,                        // 所在目录
-          isDir: dirent.isDirectory(),
-          s: 0,
-          m: 0,
-          t: 'other',
-        };
-        if (!dirent.isDirectory()) {
-          try {
-            const st = await fsp.stat(path.join(root, relPath));
-            item.s = st.size;
-            item.m = st.mtimeMs;
-            item.t = classify(dirent.name);
-          } catch (e) { /* 忽略无法 stat 的文件 */ }
-        } else {
-          stack.push(relPath);
-        }
-        result.push(item);
-        status.scanned = result.length;
+          const relPath = relDir ? relDir + '/' + dirent.name : dirent.name;
+          const item = {
+            disk: disk.id,
+            p: relPath,                       // 相对该盘根目录的路径
+            n: dirent.name,                   // 文件名
+            d: relDir,                        // 所在目录
+            isDir: dirent.isDirectory(),
+            s: 0,
+            m: 0,
+            t: 'other',
+          };
+          if (!dirent.isDirectory()) {
+            try {
+              const st = await fsp.stat(path.join(root, relPath));
+              item.s = st.size;
+              item.m = st.mtimeMs;
+              item.t = classify(dirent.name);
+            } catch (e) { /* 忽略无法 stat 的文件 */ }
+          } else {
+            stack.push(relPath);
+          }
+          result.push(item);
+          status.scanned = result.length;
 
-        // 每 40ms 让出一次事件循环，避免索引把 HTTP 请求卡住
-        if (result.length % 500 === 0) {
-          await new Promise((r) => setImmediate(r));
-        }
-        if (result.length >= MAX_ENTRIES) {
-          stack.length = 0;
-          break;
+          if (result.length % 500 === 0) {
+            await new Promise((r) => setImmediate(r));
+          }
+          if (result.length >= MAX_ENTRIES) {
+            stack.length = 0;
+            break;
+          }
         }
       }
-      // 控制扫描节奏：超过 8 分钟的索引自动收敛（避免超大目录拖垮服务）
-      if (Date.now() - started > 8 * 60 * 1000) {
-        status.error = '目录过大，索引已截断';
-        break;
-      }
+      if (result.length >= MAX_ENTRIES) break;
     }
     entries = result;
     status.building = false;
@@ -127,23 +142,35 @@ function loadCache() {
 }
 
 /**
+ * 解析搜索作用域：返回 { disk, dir }
+ * scope 形如 "<diskId>/目录"；空表示全盘
+ */
+function parseScope(scope) {
+  if (!scope) return { disk: null, dir: '' };
+  const clean = String(scope).replace(/^\/+|\/+$/g, '');
+  if (!clean) return { disk: null, dir: '' };
+  const segs = clean.split('/');
+  // 形如 disk1/家庭影像：第一段是 diskId
+  return { disk: segs[0], dir: segs.slice(1).join('/') };
+}
+
+/**
  * 搜索
- * @param {string} query 关键词（文件名模糊匹配，不区分大小写）
- * @param {string} scope 限定目录（相对路径，'' 表示全盘）
- * @param {string} category 分类过滤
- * @param {number} limit 结果上限
+ * 索引就绪走内存索引（毫秒级）；索引还在建时用实时遍历兜底，保证任何时刻都搜得动。
  */
 function search(query, scope = '', category = 'all', limit = 500) {
   const q = String(query || '').trim().toLowerCase();
   if (!q) return { results: [], fromIndex: false, building: status.building };
 
-  const prefix = normalizeScope(scope);
+  const sc = parseScope(scope);
   const out = [];
   for (const e of entries) {
     if (!e.n.toLowerCase().includes(q)) continue;
-    if (prefix && !(e.d === prefix || e.d.startsWith(prefix + '/'))) continue;
+    if (sc.disk && e.disk !== sc.disk) continue;
+    const dir = sc.disk ? sc.dir : e.d;       // 限定了具体盘时，目录相对该盘
+    if (sc.disk && dir && !(e.d === dir || e.d.startsWith(dir + '/'))) continue;
     if (category && category !== 'all' && e.t !== category) continue;
-    out.push(e);
+    out.push(toItem(e));
     if (out.length >= limit) break;
   }
   return {
@@ -154,16 +181,17 @@ function search(query, scope = '', category = 'all', limit = 500) {
   };
 }
 
-/** 按分类列出文件（用于顶部"图片/视频…"筛选页） */
+/** 按分类列出文件 */
 function listByCategory(category, scope = '', sort = 'name', order = 'asc', limit = 500) {
-  const prefix = normalizeScope(scope);
-  let out = entries.filter((e) => {
-    if (prefix && !(e.d === prefix || e.d.startsWith(prefix + '/'))) return false;
+  const sc = parseScope(scope);
+  const out = entries.filter((e) => {
+    if (sc.disk && e.disk !== sc.disk) return false;
+    const dir = sc.disk ? sc.dir : e.d;
+    if (sc.disk && dir && !(e.d === dir || e.d.startsWith(dir + '/'))) return false;
     if (category === 'all') return true;
     return e.t === category;
-  });
-  out = sortEntries(out, sort, order, true);
-  return { results: out.slice(0, limit), building: status.building };
+  }).map(toItem);
+  return { results: sortEntries(out, sort, order, true), building: status.building };
 }
 
 function normalizeScope(scope) {
@@ -177,58 +205,63 @@ function sortEntries(list, sort = 'name', order = 'asc', flat = false) {
     // 文件夹置顶（扁平列表模式下不置顶，避免分类页全是文件夹）
     if (!flat && a.isDir !== b.isDir) return a.isDir ? -1 : 1;
     let r = 0;
+    const an = a.name || '';
+    const bn = b.name || '';
     switch (sort) {
       case 'size':
-        r = (a.s || 0) - (b.s || 0);
+        r = (a.size || 0) - (b.size || 0);
         break;
       case 'mtime':
-        r = (a.m || 0) - (b.m || 0);
+        r = (a.mtime || 0) - (b.mtime || 0);
         break;
       case 'type':
-        r = String(a.t).localeCompare(String(b.t));
+        r = String(a.type).localeCompare(String(b.type));
         break;
       default:
-        // 中文友好：用 localeCompare 的 numeric 模式，"文件2" 会排在 "文件10" 前面
-        r = String(a.n).localeCompare(String(b.n), 'zh-CN', { numeric: true, sensitivity: 'base' });
+        r = String(an).localeCompare(String(bn), 'zh-CN', { numeric: true, sensitivity: 'base' });
     }
     return r * dir;
   });
   return sorted;
 }
 
-/** 索引尚未就绪时，实时遍历某个目录做兜底搜索 */
+/** 索引尚未就绪时，实时遍历某个目录做兜底搜索（覆盖所有可索引磁盘，或限定到 scope 所在盘） */
 async function searchLive(query, scopeDir, category = 'all', limit = 500) {
-  const root = getRoot();
-  const startDir = path.join(root, scopeDir || '');
   const q = String(query || '').trim().toLowerCase();
+  const sc = parseScope(scopeDir);
+  const disks = sc.disk ? getDisks().filter((d) => d.id === sc.disk && isDiskAvailable(d.id)) : indexableDisks();
   const out = [];
-  const stack = [scopeDir || ''];
-  while (stack.length) {
-    const relDir = stack.pop();
-    let dir;
-    try {
-      dir = await fsp.opendir(path.join(root, relDir));
-    } catch (e) {
-      continue;
-    }
-    for await (const dirent of dir) {
-      if (dirent.name.startsWith('.')) continue;
-      const relPath = relDir ? relDir + '/' + dirent.name : dirent.name;
-      if (dirent.isDirectory()) {
-        stack.push(relPath);
-        continue;
-      }
-      if (!dirent.name.toLowerCase().includes(q)) continue;
-      let st;
+  for (const disk of disks) {
+    const root = disk.rootReal;
+    const startDir = path.join(root, sc.disk ? sc.dir : '');
+    const stack = [sc.disk ? sc.dir : ''];
+    while (stack.length) {
+      const relDir = stack.pop();
+      let dir;
       try {
-        st = await fsp.stat(path.join(root, relPath));
+        dir = await fsp.opendir(path.join(root, relDir));
       } catch (e) {
         continue;
       }
-      const t = classify(dirent.name);
-      if (category && category !== 'all' && t !== category) continue;
-      out.push({ p: relPath, n: dirent.name, d: relDir, isDir: false, s: st.size, m: st.mtimeMs, t });
-      if (out.length >= limit) return { results: out, fromIndex: false, truncated: true };
+      for await (const dirent of dir) {
+        if (dirent.name.startsWith('.')) continue;
+        if (dirent.isDirectory()) {
+          stack.push(relDir ? relDir + '/' + dirent.name : dirent.name);
+          continue;
+        }
+        const relPath = relDir ? relDir + '/' + dirent.name : dirent.name;
+        if (!dirent.name.toLowerCase().includes(q)) continue;
+        let st;
+        try {
+          st = await fsp.stat(path.join(root, relPath));
+        } catch (e) {
+          continue;
+        }
+        const t = classify(dirent.name);
+        if (category && category !== 'all' && t !== category) continue;
+        out.push(toItem({ disk: disk.id, p: relPath, n: dirent.name, d: relDir, isDir: false, s: st.size, m: st.mtimeMs, t }));
+        if (out.length >= limit) return { results: out, fromIndex: false, truncated: true };
+      }
     }
   }
   return { results: out, fromIndex: false, truncated: false };

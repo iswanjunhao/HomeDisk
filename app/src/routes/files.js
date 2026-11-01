@@ -1,5 +1,5 @@
 /**
- * 文件浏览 / 下载 / 缩略图 / 磁盘容量
+ * 文件浏览 / 下载 / 缩略图 / 共享目录容量
  */
 
 const fs = require('fs');
@@ -10,7 +10,7 @@ const { Router } = require('express');
 const archiver = require('archiver');
 
 const guard = require('../lib/pathGuard');
-const { AppError, resolveSafe, toRel } = guard;
+const { AppError, resolveSafe, toRel, getDisks, isDiskAvailable } = guard;
 const { classify } = require('../lib/classifier');
 const { formatSize } = require('../lib/format');
 const config = require('../lib/config');
@@ -18,6 +18,31 @@ const auth = require('../lib/auth');
 const indexer = require('../lib/indexer');
 
 const router = Router();
+
+/** 计算单个共享目录所在磁盘的已用/剩余/总量（低频，调用方可自行加缓存） */
+async function diskUsage(disk) {
+  if (!isDiskAvailable(disk.id)) {
+    return { available: false, total: 0, used: 0, free: 0, usedPercent: 0,
+             totalText: '-', usedText: '-', freeText: '-' };
+  }
+  try {
+    const st = await fsp.statfs(disk.rootReal);
+    const total = st.blocks * st.bsize;
+    const free = st.bfree * st.bsize;
+    const used = total - free;
+    return {
+      available: true,
+      total, used, free,
+      usedPercent: total ? Math.round((used / total) * 100) : 0,
+      totalText: formatSize(total),
+      usedText: formatSize(used),
+      freeText: formatSize(free),
+    };
+  } catch (e) {
+    return { available: false, total: 0, used: 0, free: 0, usedPercent: 0,
+             totalText: '-', usedText: '-', freeText: '-', error: '无法读取容量信息' };
+  }
+}
 
 /** 读取单个条目的元信息 */
 async function statItem(absPath, relPath) {
@@ -38,6 +63,35 @@ async function statItem(absPath, relPath) {
 router.get('/list', async (req, res, next) => {
   try {
     const rel = req.query.path || '';
+
+    // 顶层（/）返回"共享目录选择器"：列出所有已配置的共享目录及其容量/状态
+    if (!rel || rel === '/') {
+      const disks = getDisks();
+      const items = [];
+      for (const d of disks) {
+        const u = await diskUsage(d);
+        items.push({
+          type: 'share',
+          id: d.id,
+          name: d.name,
+          path: '/' + d.id + '/',
+          enabled: d.enabled,
+          available: u.available,
+          totalText: u.totalText,
+          usedText: u.usedText,
+          freeText: u.freeText,
+          usedPercent: u.usedPercent,
+        });
+      }
+      // 已启用且可用的排前面
+      items.sort((a, b) => {
+        const av = (a.enabled && a.available ? 0 : 1) - (b.enabled && b.available ? 0 : 1);
+        if (av) return av;
+        return String(a.name).localeCompare(String(b.name), 'zh-CN', { numeric: true });
+      });
+      return res.json({ path: '/', parent: null, items, total: items.length, isShareRoot: true });
+    }
+
     const abs = resolveSafe(rel);
     const sort = req.query.sort || 'name';
     const order = req.query.order === 'desc' ? 'desc' : 'asc';
@@ -82,34 +136,40 @@ router.get('/list', async (req, res, next) => {
   }
 });
 
-/* --------------------------------- 磁盘容量 --------------------------------- */
+/* --------------------------------- 共享目录容量 --------------------------------- */
 
-let usageCache = { data: null, at: 0 };
+let usageCache = { data: null, at: 0, key: '' };
 
 router.get('/usage', async (req, res) => {
   try {
+    const shareId = req.query.share || req.query.disk || '';
+    let disk = shareId ? getDisks().find((d) => d.id === shareId) : null;
+    if (!disk) disk = getDisks().find((d) => d.enabled && isDiskAvailable(d.id)) || getDisks()[0];
+    if (!disk) {
+      return res.json({ total: 0, used: 0, free: 0, usedPercent: 0, error: '没有可用的共享目录' });
+    }
     // 容量查询属于低频操作，缓存 10 秒，避免频繁 statvfs
-    if (usageCache.data && Date.now() - usageCache.at < 10000) {
+    const cacheKey = disk.id;
+    if (usageCache.data && usageCache.at && usageCache.key === cacheKey && Date.now() - usageCache.at < 10000) {
       return res.json(usageCache.data);
     }
-    const root = guard.getRoot();
-    const st = await fsp.statfs(root);
-    const total = st.blocks * st.bsize;
-    const free = st.bfree * st.bsize;
-    const used = total - free;
+    const u = await diskUsage(disk);
     const data = {
-      total,
-      used,
-      free,
-      usedPercent: total ? Math.round((used / total) * 100) : 0,
-      totalText: formatSize(total),
-      usedText: formatSize(used),
-      freeText: formatSize(free),
+      shareId: disk.id,
+      shareName: disk.name,
+      total: u.total,
+      used: u.used,
+      free: u.free,
+      usedPercent: u.usedPercent,
+      totalText: u.totalText,
+      usedText: u.usedText,
+      freeText: u.freeText,
+      available: u.available,
     };
-    usageCache = { data, at: Date.now() };
+    usageCache = { data, at: Date.now(), key: cacheKey };
     res.json(data);
   } catch (e) {
-    res.json({ total: 0, used: 0, free: 0, usedPercent: 0, error: '无法读取磁盘容量' });
+    res.json({ total: 0, used: 0, free: 0, usedPercent: 0, error: '无法读取容量信息' });
   }
 });
 
@@ -274,15 +334,32 @@ router.get('/thumb', async (req, res, next) => {
 
 /* ---------------------------------- 全局状态 ---------------------------------- */
 
-router.get('/status', (req, res) => {
+router.get('/status', async (req, res) => {
   const cfg = config.get();
+  const diskList = [];
+  for (const d of getDisks()) {
+    const u = await diskUsage(d);
+    diskList.push({
+      id: d.id,
+      name: d.name,
+      path: d.path,
+      enabled: d.enabled,
+      available: u.available,
+      usedPercent: u.usedPercent,
+      totalText: u.totalText,
+      usedText: u.usedText,
+      freeText: u.freeText,
+    });
+  }
   res.json({
     admin: auth.isAdmin(req),
     rootAvailable: guard.isRootAvailable(),
+    shares: diskList,
+    shareCount: diskList.length,
     guestUploadMaxBytes: Number(cfg.guestUploadMaxBytes),
     guestUploadMaxText: formatSize(cfg.guestUploadMaxBytes),
     index: indexer.getStatus(),
-    version: '1.0.0',
+    version: '1.2.0',
   });
 });
 
