@@ -1,0 +1,40 @@
+# ---------------- Dependencies ----------------
+node_modules/
+app/node_modules/
+
+# ---------------- Runtime data & secrets ----------------
+# config.json contains the admin password hash — never commit it
+app/data/
+data/
+# logs
+app/logs/
+logs/
+*.log
+
+# ---------------- Upload temp files ----------------
+*.hcpart
+
+# ---------------- Bundled runtimes (platform-specific binaries) ----------------
+# Do NOT commit node binaries; they are OS/arch specific and large.
+# Users install Node.js LTS themselves, or drop node(node.exe) here.
+app/runtime/
+runtime/
+
+# ---------------- OS / editor cruft ----------------
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ---------------- Env / secrets ----------------
+.env
+*.local
+
+# ---------------- IDE ----------------
+.vscode/
+.idea/
+*.swp
+
+# ---------------- Test / build artifacts (if any added later) ----------------
+dist/
+build/
